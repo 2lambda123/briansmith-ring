@@ -83,6 +83,7 @@ const RING_SRCS: &[(&[&str], &str)] = &[
     (&[ARM], "crypto/curve25519/asm/x25519-asm-arm.S"),
     (&[ARM], "crypto/fipsmodule/modes/asm/ghash-armv4.pl"),
     (&[ARM], "crypto/poly1305/poly1305_arm.c"),
+    (&[ARM], "crypto/poly1305/poly1305.c"), // For Windows ARM32 only
     (&[ARM], "crypto/poly1305/poly1305_arm_asm.S"),
     (&[ARM], "crypto/fipsmodule/sha/asm/sha256-armv4.pl"),
     (&[ARM], "crypto/fipsmodule/sha/asm/sha512-armv4.pl"),
@@ -220,6 +221,13 @@ const ASM_TARGETS: &[AsmTarget] = &[
         oss: &[WINDOWS],
         arch: "aarch64",
         perlasm_format: "win64",
+        asm_extension: "S",
+        preassemble: false,
+    },
+    AsmTarget {
+        oss: &[WINDOWS],
+        arch: "arm",
+        perlasm_format: "win32",
         asm_extension: "S",
         preassemble: false,
     },
@@ -432,8 +440,17 @@ fn build_c_code(
 
     generate_prefix_symbols_asm_headers(out_dir, ring_core_prefix).unwrap();
 
+    let is_win_arm32 = target.arch == ARM && target.os == WINDOWS;
     let (asm_srcs, obj_srcs) = if let Some(asm_target) = asm_target {
-        let perlasm_src_dsts = perlasm_src_dsts(asm_dir, asm_target);
+        let perlasm_src_dsts = perlasm_src_dsts(asm_dir, asm_target)
+            .into_iter()
+            .filter(|(src, _)| {
+                if !is_win_arm32 {
+                    return true;
+                }
+                !src.to_string_lossy().contains("armx")
+            })
+            .collect::<Vec<_>>();
 
         if !use_pregenerated {
             perlasm(&perlasm_src_dsts[..], asm_target);
@@ -471,6 +488,18 @@ fn build_c_code(
                 }
             }
             true
+        })
+        .filter(|p| {
+            let file_name = p.file_name().unwrap().to_string_lossy();
+            if file_name.contains("poly1305.c") {
+                return is_win_arm32;
+            }
+            if !is_win_arm32 {
+                return true;
+            }
+            !["poly1305"]
+                .into_iter()
+                .any(|keyword| file_name.contains(keyword))
         })
         .collect::<Vec<_>>();
 
@@ -576,7 +605,10 @@ fn obj_path(out_dir: &Path, src: &Path) -> PathBuf {
 
 fn configure_cc(c: &mut cc::Build, target: &Target, include_dir: &Path) {
     // FIXME: On Windows AArch64 we currently must use Clang to compile C code
-    if target.os == WINDOWS && target.arch == AARCH64 && !c.get_compiler().is_like_clang() {
+    if target.os == WINDOWS
+        && (target.arch == AARCH64 || target.arch == ARM)
+        && !c.get_compiler().is_like_clang()
+    {
         let _ = c.compiler("clang");
     }
 
@@ -619,7 +651,7 @@ fn configure_cc(c: &mut cc::Build, target: &Target, include_dir: &Path) {
     }
 }
 
-/// Assembles the assemply language source `file` into the object file
+/// Assembles the assembly language source `file` into the object file
 /// `out_file`.
 fn cc_asm(b: &cc::Build, file: &Path, out_file: &Path) -> Command {
     let cc = b.get_compiler();
