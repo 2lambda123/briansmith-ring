@@ -110,6 +110,7 @@
 //!     https://github.com/briansmith/ring/blob/main/src/hkdf.rs
 
 use crate::{constant_time, digest, error, hkdf, rand};
+use core::num::NonZeroUsize;
 
 /// An HMAC algorithm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,6 +177,26 @@ impl Key {
         rng: &dyn rand::SecureRandom,
     ) -> Result<Self, error::Unspecified> {
         Self::construct(algorithm, |buf| rng.fill(buf))
+    }
+
+    /// Generate an HMAC singing key using a custom length for the given
+    /// digest algorithm.
+    ///
+    /// The key will be `length` bytes long.
+    #[cfg(feature = "alloc")]
+    pub fn generate_with_length(
+        algorithm: Algorithm,
+        length: NonZeroUsize,
+        rng: &dyn rand::SecureRandom,
+    ) -> Result<Self, error::Unspecified> {
+        let key_size = length.get();
+        let mut key_bytes = [0; digest::MAX_OUTPUT_LEN].to_vec();
+        if key_size > digest::MAX_OUTPUT_LEN {
+            key_bytes.resize(key_size, 0);
+        }
+        let key_bytes = &mut key_bytes[..key_size];
+        rng.fill(key_bytes)?;
+        Ok(Self::new(algorithm, key_bytes))
     }
 
     fn construct<F>(algorithm: Algorithm, fill: F) -> Result<Self, error::Unspecified>
@@ -344,6 +365,7 @@ pub fn verify(key: &Key, data: &[u8], tag: &[u8]) -> Result<(), error::Unspecifi
 #[cfg(test)]
 mod tests {
     use crate::{hmac, rand};
+    use core::num::NonZeroUsize;
 
     // Make sure that `Key::generate` and `verify_with_own_key` aren't
     // completely wacky.
@@ -364,6 +386,42 @@ mod tests {
             let tag = hmac::sign(&key, HELLO_WORLD_GOOD);
             assert!(hmac::verify(&key, HELLO_WORLD_GOOD, tag.as_ref()).is_ok());
             assert!(hmac::verify(&key, HELLO_WORLD_BAD, tag.as_ref()).is_err())
+        }
+    }
+
+    #[test]
+    pub fn hmac_generate_with_length() {
+        let rng = rand::SystemRandom::new();
+
+        for algorithm in &[
+            hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY,
+            hmac::HMAC_SHA256,
+            hmac::HMAC_SHA384,
+            hmac::HMAC_SHA512,
+        ] {
+            let output_len = algorithm.0.output_len;
+            let block_len = algorithm.0.block_len;
+
+            for length in &[
+                1,
+                2,
+                output_len - 1,
+                output_len,
+                output_len + 1,
+                block_len - 1,
+                block_len,
+                block_len + 1,
+                (block_len * 2) - 1,
+                block_len * 2,
+                (block_len * 2) + 1,
+            ] {
+                let _key = hmac::Key::generate_with_length(
+                    *algorithm,
+                    NonZeroUsize::new(*length).unwrap(),
+                    &rng,
+                )
+                .unwrap();
+            }
         }
     }
 }
