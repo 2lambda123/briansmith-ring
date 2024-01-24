@@ -22,6 +22,7 @@
 
 #include <openssl/digest.h>
 #include <openssl/ecdsa.h>
+#include <openssl/err.h>
 #include <openssl/mem.h>
 #include <openssl/nid.h>
 #include <openssl/sha.h>
@@ -33,7 +34,6 @@
 
 enum ECDSASigFormat { Fixed, ASN1 };
 enum Affinification { MakeAffineAllZero, MakeAffineToken, Unchanged };
-
 
 static void digest_to_bn(BIGNUM *out, const uint8_t *digest, size_t digest_len,
                          const BIGNUM *order) {
@@ -748,25 +748,18 @@ static bool print_point(const EC_GROUP *group, const char *name,
     printf(", ");
     print_hex(stdout, buf, num_bytes);
   } else {
-    if (!ec_felem_to_bignum(group, t.get(), &p->raw.X)) {
-      return false;
-    }
-    if (!BN_bn2bin_padded(buf, num_bytes, t.get())) {
-      return false;
-    }
+    size_t bytes_out = 1024;
+    ec_GFp_simple_felem_to_bytes(group, buf, &bytes_out, &p->raw.X);
     print_hex(stdout, buf, num_bytes);
     printf(", ");
-    ec_felem_to_bignum(group, t.get(), &p->raw.Y);
-    if (!BN_bn2bin_padded(buf, num_bytes, t.get())) {
-      return false;
-    }
+
+    bytes_out = 1024;
+    ec_GFp_simple_felem_to_bytes(group, buf, &bytes_out, &p->raw.Y);
     print_hex(stdout, buf, num_bytes);
   }
   if (aff == Unchanged) {
-    ec_felem_to_bignum(group, t.get(), &p->raw.Z);
-    if (!BN_bn2bin_padded(buf, num_bytes, t.get())) {
-      return false;
-    }
+    size_t bytes_out = 1024;
+    ec_GFp_simple_felem_to_bytes(group, buf, &bytes_out, &p->raw.Z);
     printf(", ");
     print_hex(stdout, buf, num_bytes);
   }
@@ -783,9 +776,15 @@ static bool GenerateECCPointDoubleTest(const InterestingPoints &points,
     return false;
   }
   for (size_t i = 0; i < n; ++i) {
-    if (!EC_POINT_dbl(group, r.get(), r.get(), ctx) ||
-        !EC_POINT_make_affine(group, r.get(), ctx)) {
+    if (!EC_POINT_dbl(group, r.get(), r.get(), ctx)) {
       return false;
+    }
+
+    if (!EC_POINT_make_affine(group, r.get(), ctx)) {
+      if (ERR_GET_REASON(ERR_peek_error()) != EC_R_POINT_AT_INFINITY) {
+        return false;
+      }
+      ERR_get_error();
     }
   }
   printf("\n");
@@ -1159,7 +1158,7 @@ static bool GenerateElemSumTests(const InterestingPoints &points, BN_CTX *ctx) {
 
   const bssl::UniquePtr<BIGNUM> &m = q;
 
-  printf("# Montgomery Arithmetic; values are in the range [0, q).\n\n");
+  printf("# Montgomery Arithmetic; values are in the range [0, q).\n");
 
   if (!GenerateSumTest(points, zero, zero, &zero, m, q) ||
       !GenerateSumTest(points, zero, one, &one, m, q) ||
@@ -1574,6 +1573,21 @@ static bool GenerateNegTests(const InterestingPoints &points, BN_CTX *ctx) {
   return true;
 }
 
+#define GEN_CURVE_TESTS(curve, name, gen)                    \
+  {                                                          \
+    std::string test_name = "ecc-" curve "-" name;           \
+    if (args[0] == curve || args[0] == test_name) {          \
+      if (args[0] == curve) {                                \
+        std::string file_name = curve "_" name "_tests.txt"; \
+        freopen(file_name.c_str(), "w", stdout);             \
+      }                                                      \
+      bool status = gen;                                     \
+      if (!status || args[0] != curve) {                     \
+        return status;                                       \
+      }                                                      \
+    }                                                        \
+  }
+
 bool GenerateTests(const std::vector<std::string> &args) {
   if (args.size() == 0) {
     printf("No test set specified.\n");
@@ -1588,16 +1602,18 @@ bool GenerateTests(const std::vector<std::string> &args) {
   if (args[0] == "ecdsa-short-s-asn1") {
     return GenerateShortSTests(ASN1, ctx.get());
   }
+
   if (args[0] == "ecdsa-asn1") {
     return GenerateECDSATests(ASN1, ctx.get());
   }
+
   if (args[0] == "ecdsa-short-s-fixed") {
     return GenerateShortSTests(Fixed, ctx.get());
   }
+
   if (args[0] == "ecdsa-fixed") {
     return GenerateECDSATests(Fixed, ctx.get());
   }
-
 
   if (args[0] == "ecc-public-key") {
     return GenerateECCPublicKeyTests(ctx.get());
@@ -1609,6 +1625,7 @@ bool GenerateTests(const std::vector<std::string> &args) {
   if (!valid_points) {
     return false;
   }
+
   valid_points = false;
   InterestingPoints p384_points(&valid_points, NID_secp384r1, "P-384",
                                 ctx.get());
@@ -1616,84 +1633,123 @@ bool GenerateTests(const std::vector<std::string> &args) {
     return false;
   }
 
-  if (args[0] == "ecc-p256-point-double") {
-    return GenerateECCPointDoubleTestsForCurve(p256_points, ctx.get());
+  valid_points = false;
+  InterestingPoints p521_points(&valid_points, NID_secp521r1, "P-521",
+                                ctx.get());
+  if (!valid_points) {
+    return false;
   }
 
-  if (args[0] == "ecc-p384-point-double") {
-    return GenerateECCPointDoubleTestsForCurve(p384_points, ctx.get());
-  }
-  if (args[0] == "ecc-p256-point-sum") {
-    return GenerateECCPointAddTestsForCurve(p256_points, Unchanged, ctx.get());
-  }
-  if (args[0] == "ecc-p384-point-sum") {
-    return GenerateECCPointAddTestsForCurve(p384_points, Unchanged, ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "point_double",
+                  GenerateECCPointDoubleTestsForCurve(p256_points, ctx.get()));
 
-  if (args[0] == "ecc-p256-point-sum-mixed") {
-    return GenerateECCPointAddTestsForCurve(p256_points, MakeAffineAllZero,
-                                            ctx.get());
-  }
+  GEN_CURVE_TESTS(
+      "p256", "point_sum",
+      GenerateECCPointAddTestsForCurve(p256_points, Unchanged, ctx.get()));
 
-  if (args[0] == "ecc-p384-point-sum-mixed") {
-    return GenerateECCPointAddTestsForCurve(p384_points, MakeAffineAllZero,
-                                            ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "point_sum_mixed",
+                  GenerateECCPointAddTestsForCurve(
+                      p256_points, MakeAffineAllZero, ctx.get()));
 
-  if (args[0] == "ecc-p256-sums") {
-    return GenerateElemSumTests(p256_points, ctx.get());
-  }
-  if (args[0] == "ecc-p384-sums") {
-    return GenerateElemSumTests(p384_points, ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "elem_sum",
+                  GenerateElemSumTests(p256_points, ctx.get()));
 
-  if (args[0] == "ecc-p256-q-products") {
-    return GenerateElemMulTests(p256_points, ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "elem_mul",
+                  GenerateElemMulTests(p256_points, ctx.get()));
 
-  if (args[0] == "ecc-p384-q-products") {
-    return GenerateElemMulTests(p384_points, ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "scalar_mul",
+                  GenerateScalarMulTests(p256_points, ctx.get()));
 
-  if (args[0] == "ecc-p256-n-products") {
-    return GenerateScalarMulTests(p256_points, ctx.get());
-  }
+  GEN_CURVE_TESTS(
+      "p256", "scalar_square",
+      GenerateScalarSquareTests(p256_points, ctx.get(),
+                                "ffffffff80000000600000002fffffff"));
 
-  if (args[0] == "ecc-p384-n-products") {
-    return GenerateScalarMulTests(p384_points, ctx.get());
-  }
-
-  if (args[0] == "ecc-p256-n-square") {
-    return GenerateScalarSquareTests(p256_points, ctx.get(),
-                                     "ffffffff80000000600000002fffffff");
-  }
-
-  if (args[0] == "ecc-p384-n-square") {
-    return GenerateScalarSquareTests(
-        p384_points, ctx.get(),
-        "ffffffffffffffffffffffffffffffffffffffffffffffff");
-  }
-
-  if (args[0] == "ecc-p384-div_by_2") {
-    return GenerateDivBy2Tests(p384_points, ctx.get());
-  }
-
-  if (args[0] == "ecc-p256-neg") {
-    return GenerateNegTests(p256_points, ctx.get());
-  }
-
-  if (args[0] == "ecc-p384-neg") {
-    return GenerateNegTests(p384_points, ctx.get());
-  }
+  GEN_CURVE_TESTS("p256", "elem_neg", GenerateNegTests(p256_points, ctx.get()));
 
   if (args[0] == "ecc-p256-point-mul-twin") {
     return GeneratePointMulTwinTests(p256_points, true, true, ctx.get());
   }
 
+  if (args[0] == "p256") {
+    return true;
+  }
+
+  GEN_CURVE_TESTS("p384", "point_double",
+                  GenerateECCPointDoubleTestsForCurve(p384_points, ctx.get()));
+
+  GEN_CURVE_TESTS(
+      "p384", "point_sum",
+      GenerateECCPointAddTestsForCurve(p384_points, Unchanged, ctx.get()));
+
+  GEN_CURVE_TESTS("p384", "point_sum_mixed",
+                  GenerateECCPointAddTestsForCurve(
+                      p384_points, MakeAffineAllZero, ctx.get()));
+
+  GEN_CURVE_TESTS("p384", "elem_sum",
+                  GenerateElemSumTests(p384_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p384", "elem_mul",
+                  GenerateElemMulTests(p384_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p384", "scalar_mul",
+                  GenerateScalarMulTests(p384_points, ctx.get()));
+
+  GEN_CURVE_TESTS(
+      "p384", "scalar_square",
+      GenerateScalarSquareTests(p384_points, ctx.get(),
+                                "ffffffff80000000600000002fffffff"));
+
+  GEN_CURVE_TESTS("p384", "elem_neg", GenerateNegTests(p384_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p384", "elem_div_by_2",
+                  GenerateDivBy2Tests(p384_points, ctx.get()));
+
   if (args[0] == "ecc-p384-point-mul-twin") {
     return GeneratePointMulTwinTests(p384_points, true, true, ctx.get());
   }
 
+  if (args[0] == "p384") {
+    return true;
+  }
+
+  GEN_CURVE_TESTS("p521", "point_double",
+                  GenerateECCPointDoubleTestsForCurve(p521_points, ctx.get()));
+
+  GEN_CURVE_TESTS(
+      "p521", "point_sum",
+      GenerateECCPointAddTestsForCurve(p521_points, Unchanged, ctx.get()));
+
+  GEN_CURVE_TESTS("p521", "point_sum_mixed",
+                  GenerateECCPointAddTestsForCurve(
+                      p521_points, MakeAffineAllZero, ctx.get()));
+
+  GEN_CURVE_TESTS("p521", "elem_sum",
+                  GenerateElemSumTests(p521_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p521", "elem_mul",
+                  GenerateElemMulTests(p521_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p521", "scalar_mul",
+                  GenerateScalarMulTests(p521_points, ctx.get()));
+
+  GEN_CURVE_TESTS(
+      "p521", "scalar_square",
+      GenerateScalarSquareTests(p521_points, ctx.get(),
+                                "ffffffff80000000600000002fffffff"));
+
+  GEN_CURVE_TESTS("p521", "elem_neg", GenerateNegTests(p521_points, ctx.get()));
+
+  GEN_CURVE_TESTS("p521", "elem_div_by_2",
+                  GenerateDivBy2Tests(p521_points, ctx.get()));
+
+  if (args[0] == "ecc-p521-point-mul-twin") {
+    return GeneratePointMulTwinTests(p521_points, true, true, ctx.get());
+  }
+
+  if (args[0] == "p521") {
+    return true;
+  }
 
   printf("Unrecognized test set.\n");
   return false;
