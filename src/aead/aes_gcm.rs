@@ -58,7 +58,7 @@ pub(super) fn seal(
     let mut ctr = Counter::one(nonce);
     let tag_iv = ctr.increment();
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(perlasm, target_arch = "x86_64"))]
     let in_out = {
         if !aes_key.is_aes_hw(cpu_features) || !auth.is_avx() {
             in_out
@@ -95,7 +95,7 @@ pub(super) fn seal(
 
     let (whole, remainder) = slice::as_chunks_mut(in_out);
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(perlasm, target_arch = "aarch64"))]
     let whole = {
         if !aes_key.is_aes_hw(cpu_features) || !auth.is_clmul() {
             whole
@@ -175,7 +175,7 @@ pub(super) fn open(
 
     let in_prefix_len = src.start;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(perlasm, target_arch = "x86_64"))]
     let in_out = {
         if !aes_key.is_aes_hw(cpu_features) || !auth.is_avx() {
             in_out
@@ -210,7 +210,7 @@ pub(super) fn open(
         }
     };
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(perlasm, target_arch = "aarch64"))]
     let in_out = {
         if !aes_key.is_aes_hw(cpu_features) || !auth.is_clmul() {
             in_out

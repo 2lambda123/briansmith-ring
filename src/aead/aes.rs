@@ -176,11 +176,14 @@ impl Key {
         };
 
         match detect_implementation(cpu_features) {
-            #[cfg(any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "x86_64",
-                target_arch = "x86"
+            #[cfg(all(
+                perlasm,
+                any(
+                    target_arch = "aarch64",
+                    target_arch = "arm",
+                    target_arch = "x86_64",
+                    target_arch = "x86"
+                )
             ))]
             // SAFETY: `aes_hw_set_encrypt_key` satisfies the `set_encrypt_key!`
             // contract for these target architectures.
@@ -188,11 +191,14 @@ impl Key {
                 set_encrypt_key!(aes_hw_set_encrypt_key, bytes, &mut key, cpu_features)?;
             },
 
-            #[cfg(any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "x86_64",
-                target_arch = "x86"
+            #[cfg(all(
+                perlasm,
+                any(
+                    target_arch = "aarch64",
+                    target_arch = "arm",
+                    target_arch = "x86_64",
+                    target_arch = "x86"
+                )
             ))]
             // SAFETY: `vpaes_set_encrypt_key` satisfies the `set_encrypt_key!`
             // contract for these target architectures.
@@ -213,19 +219,25 @@ impl Key {
     #[inline]
     pub fn encrypt_block(&self, a: Block, cpu_features: cpu::Features) -> Block {
         match detect_implementation(cpu_features) {
-            #[cfg(any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "x86_64",
-                target_arch = "x86"
+            #[cfg(all(
+                perlasm,
+                any(
+                    target_arch = "aarch64",
+                    target_arch = "arm",
+                    target_arch = "x86_64",
+                    target_arch = "x86"
+                )
             ))]
             Implementation::HWAES => encrypt_block!(aes_hw_encrypt, a, self),
 
-            #[cfg(any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "x86_64",
-                target_arch = "x86"
+            #[cfg(all(
+                perlasm,
+                any(
+                    target_arch = "aarch64",
+                    target_arch = "arm",
+                    target_arch = "x86_64",
+                    target_arch = "x86"
+                )
             ))]
             Implementation::VPAES_BSAES => encrypt_block!(vpaes_encrypt, a, self),
 
@@ -248,11 +260,14 @@ impl Key {
         cpu_features: cpu::Features,
     ) {
         match detect_implementation(cpu_features) {
-            #[cfg(any(
-                target_arch = "aarch64",
-                target_arch = "arm",
-                target_arch = "x86_64",
-                target_arch = "x86"
+            #[cfg(all(
+                perlasm,
+                any(
+                    target_arch = "aarch64",
+                    target_arch = "arm",
+                    target_arch = "x86_64",
+                    target_arch = "x86"
+                )
             ))]
             // SAFETY:
             //  * self.inner was initialized with `aes_hw_set_encrypt_key` above,
@@ -270,7 +285,10 @@ impl Key {
                 )
             },
 
-            #[cfg(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64"))]
+            #[cfg(all(
+                perlasm,
+                any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")
+            ))]
             Implementation::VPAES_BSAES => {
                 #[cfg(target_arch = "arm")]
                 let in_out = {
@@ -357,7 +375,7 @@ impl Key {
         [b0, b1, b2, b3, b4]
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(all(perlasm, any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[must_use]
     pub fn is_aes_hw(&self, cpu_features: cpu::Features) -> bool {
         matches!(detect_implementation(cpu_features), Implementation::HWAES)
@@ -439,20 +457,26 @@ pub(super) const ZERO_BLOCK: Block = [0u8; BLOCK_LEN];
 #[derive(Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Implementation {
-    #[cfg(any(
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "x86_64",
-        target_arch = "x86"
+    #[cfg(all(
+        perlasm,
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "x86_64",
+            target_arch = "x86"
+        )
     ))]
     HWAES,
 
     // On "arm" only, this indicates that the bsaes implementation may be used.
-    #[cfg(any(
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "x86_64",
-        target_arch = "x86"
+    #[cfg(all(
+        perlasm,
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "x86_64",
+            target_arch = "x86"
+        )
     ))]
     VPAES_BSAES,
 
@@ -461,36 +485,39 @@ pub enum Implementation {
 
 fn detect_implementation(cpu_features: cpu::Features) -> Implementation {
     // `cpu_features` is only used for specific platforms.
-    #[cfg(not(any(
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "x86_64",
-        target_arch = "x86"
+    #[cfg(not(all(
+        perlasm,
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "x86_64",
+            target_arch = "x86"
+        )
     )))]
     let _cpu_features = cpu_features;
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(all(perlasm, any(target_arch = "aarch64", target_arch = "arm")))]
     {
         if cpu::arm::AES.available(cpu_features) {
             return Implementation::HWAES;
         }
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(all(perlasm, any(target_arch = "x86_64", target_arch = "x86")))]
     {
         if cpu::intel::AES.available(cpu_features) {
             return Implementation::HWAES;
         }
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(all(perlasm, any(target_arch = "x86_64", target_arch = "x86")))]
     {
         if cpu::intel::SSSE3.available(cpu_features) {
             return Implementation::VPAES_BSAES;
         }
     }
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(all(perlasm, any(target_arch = "aarch64", target_arch = "arm")))]
     {
         if cpu::arm::NEON.available(cpu_features) {
             return Implementation::VPAES_BSAES;
