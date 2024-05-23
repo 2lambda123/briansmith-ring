@@ -12,6 +12,8 @@
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+mod aes_nohw;
+
 use super::{nonce::Nonce, quic::Sample};
 use crate::{
     bits::BitLength,
@@ -177,7 +179,7 @@ impl Key {
         cpu_features: cpu::Features,
     ) -> Result<Self, error::Unspecified> {
         let mut key = AES_KEY {
-            rd_key: [0u32; 4 * (MAX_ROUNDS + 1)],
+            rd_key: [[0u32; 4]; MAX_ROUNDS + 1],
             rounds: 0,
         };
 
@@ -203,9 +205,7 @@ impl Key {
 
             // SAFETY: `aes_nohw_set_encrypt_key` satisfies the `set_encrypt_key!`
             // contract.
-            Implementation::NOHW => unsafe {
-                set_encrypt_key!(aes_nohw_set_encrypt_key, bytes, &mut key, cpu_features)?;
-            },
+            Implementation::NOHW => aes_nohw::set_encrypt_key(&mut key, bytes),
         };
 
         Ok(Self { inner: key })
@@ -225,7 +225,11 @@ impl Key {
             ))]
             Implementation::VPAES_BSAES => encrypt_block!(vpaes_encrypt, a, self),
 
-            Implementation::NOHW => encrypt_block!(aes_nohw_encrypt, a, self),
+            Implementation::NOHW => {
+                let mut in_out = a;
+                aes_nohw::encrypt_block(&self.inner, &mut in_out);
+                in_out
+            }
         }
     }
 
@@ -327,16 +331,7 @@ impl Key {
             //    above, as required by `aes_nohw_ctr32_encrypt_blocks`.
             //  * `aes_nohw_ctr32_encrypt_blocks` satisfies the contract for
             //    `ctr32_encrypt_blocks`.
-            Implementation::NOHW => unsafe {
-                ctr32_encrypt_blocks!(
-                    aes_nohw_ctr32_encrypt_blocks,
-                    in_out,
-                    src,
-                    &self.inner,
-                    ctr,
-                    cpu_features
-                )
-            },
+            Implementation::NOHW => aes_nohw::ctr32_encrypt_within(&self.inner, in_out, src, ctr),
         }
     }
 
@@ -358,15 +353,13 @@ impl Key {
     }
 }
 
-// Keep this in sync with AES_KEY in aes.h.
 #[repr(C)]
 #[derive(Clone)]
 pub(super) struct AES_KEY {
-    pub rd_key: [u32; 4 * (MAX_ROUNDS + 1)],
+    pub rd_key: [[u32; 4]; MAX_ROUNDS + 1],
     pub rounds: c::uint,
 }
 
-// Keep this in sync with `AES_MAXNR` in aes.h.
 const MAX_ROUNDS: usize = 14;
 
 pub const AES_128_KEY_LEN: usize = 128 / 8;
@@ -398,6 +391,10 @@ impl Counter {
         let old_value: u32 = u32::from_be_bytes([*c0, *c1, *c2, *c3]);
         let new_value = old_value + increment_by;
         [*c0, *c1, *c2, *c3] = u32::to_be_bytes(new_value);
+    }
+
+    pub(super) fn as_bytes_less_safe(&self) -> [u8; 16] {
+        self.0
     }
 }
 
@@ -510,7 +507,7 @@ unsafe fn bsaes_ctr32_encrypt_blocks_with_vpaes_key(
     }
 
     let mut bsaes_key = AES_KEY {
-        rd_key: [0u32; 4 * (MAX_ROUNDS + 1)],
+        rd_key: [[0u32; 4]; MAX_ROUNDS + 1],
         rounds: 0,
     };
     // SAFETY:

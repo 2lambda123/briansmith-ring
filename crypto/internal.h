@@ -378,18 +378,6 @@ static inline crypto_word_t constant_time_declassify_w(crypto_word_t v) {
 static inline uint32_t CRYPTO_bswap4(uint32_t x) {
   return __builtin_bswap32(x);
 }
-
-static inline uint64_t CRYPTO_bswap8(uint64_t x) {
-  return __builtin_bswap64(x);
-}
-#elif defined(_MSC_VER)
-#pragma warning(push, 3)
-#include <stdlib.h>
-#pragma warning(pop)
-#pragma intrinsic(_byteswap_ulong)
-static inline uint32_t CRYPTO_bswap4(uint32_t x) {
-  return _byteswap_ulong(x);
-}
 #endif
 
 #if !defined(RING_CORE_NOSTDLIBINC)
@@ -452,23 +440,6 @@ static inline uint32_t CRYPTO_load_u32_le(const void *in) {
 
 static inline void CRYPTO_store_u32_le(void *out, uint32_t v) {
 #if defined(RING_BIG_ENDIAN)
-  v = CRYPTO_bswap4(v);
-#endif
-  OPENSSL_memcpy(out, &v, sizeof(v));
-}
-
-static inline uint32_t CRYPTO_load_u32_be(const void *in) {
-  uint32_t v;
-  OPENSSL_memcpy(&v, in, sizeof(v));
-#if !defined(RING_BIG_ENDIAN)
-  return CRYPTO_bswap4(v);
-#else
-  return v;
-#endif
-}
-
-static inline void CRYPTO_store_u32_be(void *out, uint32_t v) {
-#if !defined(RING_BIG_ENDIAN)
   v = CRYPTO_bswap4(v);
 #endif
   OPENSSL_memcpy(out, &v, sizeof(v));

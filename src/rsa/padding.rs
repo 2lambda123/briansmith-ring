@@ -74,7 +74,7 @@ fn mgf1(digest_alg: &'static digest::Algorithm, seed: &[u8], out: &mut [u8]) {
 
         // The last chunk may legitimately be shorter than `digest`, but
         // `digest` will never be shorter than `out`.
-        constant_time::xor_assign_at_start(out, digest.as_ref());
+        constant_time::xor_assign_at_start_bytes(out, digest.as_ref());
     }
 }
 

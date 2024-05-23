@@ -22,7 +22,7 @@ pub const fn u64_from_usize(x: usize) -> u64 {
 }
 
 #[cfg(any(target_pointer_width = "32", target_pointer_width = "64"))]
-pub fn usize_from_u32(x: u32) -> usize {
+pub const fn usize_from_u32(x: u32) -> usize {
     x as usize
 }
 
